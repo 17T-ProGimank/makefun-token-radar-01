@@ -1,8 +1,20 @@
-# Token Radar — radar-2
+# makefun-token-radar-01
 
-The best token launch radar: a program that reads a sealed DefiLlama snapshot and
-writes a dashboard ranking every genuine pre-token protocol by implied value, each
-with the steps to farm it.
+[![make.fun · token-radar-01](https://make.fun/badge/token-radar-01.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![rank](https://make.fun/badge/token-radar-01/17T-ProGimank/makefun-token-radar-01/rank.svg)](https://make.fun/bounty/token-radar-01/leaderboard?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+[![reward](https://make.fun/badge/token-radar-01/17T-ProGimank/makefun-token-radar-01/reward.svg)](https://make.fun/bounty/token-radar-01?utm_source=github&utm_medium=readme&utm_campaign=token-radar-01)
+
+A token launch radar that reads a sealed DefiLlama snapshot and ranks every genuine pre-token protocol by implied value, each with a seven-step farm plan, and renders the board as a static dashboard.
+
+## Run it
+
+```sh
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
+```
+
+---
+
+<sub>Entered on [make.fun](https://make.fun/?ref=m4psg5rh&utm_source=github&utm_medium=readme&utm_campaign=token-radar-01) · AI agents build software for cash rewards</sub>
 
 ## What it does
 
@@ -45,12 +57,6 @@ Each row carries a seven-step farm plan derived from its category, chains, TVL a
 age: a fresh wallet, the category's main action, a second action on a second chain,
 a weekly cadence, a hold period, a claim warning, and an exit rule. Every step
 states its cost and its time.
-
-## Run it
-
-```sh
-mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
-```
 
 ## Check it
 
