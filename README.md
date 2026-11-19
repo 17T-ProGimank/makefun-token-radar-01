@@ -27,6 +27,8 @@ protocols with the model in `lib/model.ts`, and writes:
 - `/output/screenshots/` — board, detail and filtered views
 - `/output/dossier.json` — built with `buildDossier` from `vendor/makefun-board.ts`
 
+Methodology: the ranking is explained line by line in `docs/methodology.md`.
+
 ## The model (radar-2)
 
 ```
