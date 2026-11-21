@@ -1,15 +1,85 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token Radar: pre-token protocols ranked by implied value</title>
+<title>Launch Radar — Token Radar v2</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<a class="skip" href="#board">Skip to the board</a>
-<main id="board" tabindex="-1" aria-busy="true"></main>
-<script src="../data.js"></script>
+<header class="top">
+  <div>
+    <h1>LAUNCH RADAR <span class="v2">v2</span></h1>
+    <p class="sub">Which pre-token protocol is worth farming next — and what to do about it.</p>
+  </div>
+  <div class="meta" id="meta">Snapshot: —</div>
+</header>
+
+<section class="kpis" id="kpis"></section>
+
+<section class="integrity">
+  <strong>How to read this board.</strong>
+  <span id="integrity-text"></span>
+</section>
+
+<nav class="tabs">
+  <button id="tab-board" class="active">Board</button>
+  <button id="tab-anchors">Anchors &amp; calibration</button>
+</nav>
+
+<section id="view-board">
+  <div class="controls">
+    <input id="q" type="search" placeholder="Search protocol…" aria-label="Search protocol">
+    <select id="cat" aria-label="Category"><option value="">All categories</option></select>
+    <select id="mintvl" aria-label="Minimum TVL">
+      <option value="0">Any TVL</option>
+      <option value="1000000000">TVL ≥ $1B</option>
+      <option value="100000000">TVL ≥ $100M</option>
+      <option value="50000000">TVL ≥ $50M (watchlist floor)</option>
+    </select>
+    <select id="sort" aria-label="Sort by">
+      <option value="rank">Sort: rank (implied value)</option>
+      <option value="tvl">Sort: TVL</option>
+      <option value="age">Sort: age (oldest first)</option>
+      <option value="odds">Sort: listing odds</option>
+    </select>
+    <label class="watch"><input id="watchonly" type="checkbox"> Watchlist only</label>
+  </div>
+  <p class="count" id="count"></p>
+  <table id="board">
+    <thead><tr>
+      <th>#</th><th>Protocol</th><th>Category</th><th>Chains</th>
+      <th class="num">TVL</th><th class="num">7d</th><th class="num">Age</th>
+      <th class="num">Fitted value</th><th class="num">Odds</th>
+      <th class="num">Implied value</th><th class="num">Farm cost</th>
+    </tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <p class="pager"><button id="prev">← Prev</button> <span id="page"></span> <button id="next">Next →</button></p>
+  <section id="detail" class="detail" hidden></section>
+</section>
+
+<section id="view-anchors" hidden>
+  <h2>Anchors &amp; calibration</h2>
+  <p class="note" id="cal-note"></p>
+  <div id="holdouts"></div>
+  <table id="anchors">
+    <thead><tr>
+      <th>Protocol</th><th class="num">TVL</th><th class="num">Actual mcap</th>
+      <th class="num">Fitted value</th><th class="num">Fitted ÷ actual</th>
+    </tr></thead>
+    <tbody id="anchor-rows"></tbody>
+  </table>
+</section>
+
+<footer>
+  <p>Source: DefiLlama snapshot, sealed at the competition (see snapshot as-of date above).
+  “Records no token” means DefiLlama records none — not that the protocol has none.
+  Implied values are this entry's own claim, fitted from the snapshot, never make.fun's.
+  Gas figures are typical per-transaction costs, stated in docs/methodology.md.</p>
+</footer>
+
+<script src="zdata.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

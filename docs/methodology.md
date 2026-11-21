@@ -1,214 +1,219 @@
-# Token Radar — how the board is built (radar-2)
+# Launch Radar v2 — Methodology
 
-This note explains the ranking behind `board.json`: what the number on each
-row means, why each input is shaped the way it is, and where the board can
-mislead. It is written for a reader who wants to check the work, not just
-trust the table.
+## What the board is
 
-## The question the board answers
+The board ranks **all 342 protocols in the sealed snapshot that record no
+token** (both `gecko_id` and `symbol` null), by implied launch value. It
+covers the whole 40-protocol watchlist, plus the 302 other pre-token
+protocols — the watchlist is the floor, never the ceiling. The 416
+protocols that record a token are not ranked rows: their launch already
+happened, so their value is realised, not implied. They appear as
+**anchors** — the 128 of them that record a market cap are what the value
+model is fitted on, and the dashboard's Anchors tab shows each one's fitted
+value beside its actual market cap, so the fit can be checked against
+reality.
 
-A protocol with no token yet has no market price, so there is nothing to
-rank it by directly. The board answers a substitute question: if this
-protocol launched a token tomorrow, what would the market plausibly value
-it at? The answer is an implied value, built from the protocol's locked
-value and five adjustments. It is a guess with a method, not a price.
+Data: DefiLlama snapshot sealed for this competition, `as_of` 2026-11-14,
+758 protocols at or above $5,000,000 TVL, floor $50,000,000. The snapshot
+never moves; every run of the program reads the same bytes, and the program
+re-fits both models from it at run time. Nothing in the board comes from a
+hand-kept list of names.
 
-## The formula
+**Language that matters.** The snapshot says a protocol *records no
+token*, never that it *has* none: a protocol may hold a token its
+DefiLlama record does not carry. The board's implied values are this
+entry's own claim, fitted from the snapshot, never make.fun's. No part of
+the board predicts whether or when a token is issued.
 
-Every row starts from the same base: a quarter of the protocol's total
-value locked. A quarter is the working assumption for the share of a
-protocol's value that a new token would capture. From there, five
-multipliers move the number up or down:
+## The model
 
-    implied = TVL x 0.25 x size x growth x maturity x chains x category
+```
+implied_value_usd = fitted_launch_value × P(token ever lists) × own_token_share
+```
 
-All five multipliers are properties of the snapshot's own fields — the
-locked value, its seven-day change, the protocol's age, how many chains
-it runs on, and its category string. No multiplier looks at a protocol's
-name, its backers, or anything outside the snapshot.
+Three terms, each with its own job:
 
-## Size: small is not punished linearly
+### 1. Fitted launch value — log-linear, fitted on the anchors
 
-The size multiplier is (TVL / $1B) raised to the power −0.1, clipped to
-the band 0.85 to 1.60. The negative exponent is the whole point: a
-protocol ten times smaller does not score ten times lower. It scores a
-little higher per dollar locked, because a small protocol that is already
-holding value has more room to grow into a token launch than a giant
-whose value is already obvious.
+```
+log10(market cap) = 1.7916
+  + 0.5842 · log10(TVL)
+  + 0.3054 · log10(age in days + 1)
+  − 0.0803 · log10(number of chains)
+  − 0.3062 · growth_7d (signed log1p of the 7-day change)
+  + category terms: Dexs +0.1143, Lending −0.6730, Liquid Staking −0.6118,
+    Yield −0.1546, RWA +0.0175, Derivatives +0.4419, Bridge +0.1983,
+    Yield Aggregator −0.5108 (other categories 0)
+```
 
-Worked numbers, all from the formula above:
+Fitted by least squares on the 128 anchors (traded protocols with a
+market cap), with **two rounds of 2-sigma residual trimming** (16 anchors
+dropped in all). Trimming is needed because market-cap/TVL in the anchors
+spans 0.001× to 400×: a handful of wild ratios (one anchor at 400×) would
+otherwise drag the whole fit. Age is days since DefiLlama began tracking
+the protocol; protocols with no `listed_at` take the median age (677
+days). Growth is winsorised through a signed log1p, so the single +4,448%
+7-day change in the snapshot cannot dominate. Coefficients are printed to
+four decimals here; the program uses full precision.
 
-- TVL $100M: (0.1)^−0.1 is about 1.26. A hundred-million protocol gets
-  a 26% lift on its base.
-- TVL $1B: (1)^−0.1 is exactly 1.00. One billion is the pivot.
-- TVL $10B: (10)^−0.1 is about 0.79, which the clip leaves alone
-  because it sits inside the band. A ten-billion protocol is marked
-  down about a fifth per dollar.
-- TVL $100B: (100)^−0.1 is about 0.63, which the clip raises to 0.85.
-  The clip exists so that giants are not punished without limit.
+Full fit on the 128 anchors: **R² 0.212, MAE 0.663 in log10 (×4.6 in
+dollars)**. That is a weak fit in absolute terms, and it is reported as
+one: the relationship between TVL and market cap is genuinely noisy. What
+the fit does capture is the median relationship — a protocol ten times
+larger is worth about 10^0.58 ≈ 3.8× more — and that is what the ranking
+is built on. The dollar figures are order-of-magnitude claims; the
+ranking is the product, not the precision.
 
-The practical effect: compare a $50M protocol with a $5B one. The small
-one's size multiplier is about 1.35; the giant's is about 0.85. Per
-dollar locked, the small protocol is valued about 1.6 times higher. A
-ranking that used TVL alone would just be a TVL table, and the board
-would tell you nothing a sort could not.
+### 2. Listing odds — logistic, fitted on all 758 protocols
 
-## Growth: falls hurt more than rises help
+P(a protocol ever lists a token), fitted by logistic regression on all 758
+protocols (listed = 1, not listed = 0), with the four continuous features
+standardised and an L2 penalty (λ = 1, 3,000 gradient steps):
 
-The growth multiplier starts from the protocol's seven-day TVL change,
-clipped to the range −60% to +150% before it is used. A rise adds 0.6
-points of multiplier per point of growth; a fall subtracts 0.75 points
-per point of decline. The asymmetry is deliberate: a protocol losing
-locked value quickly is usually losing it for a reason, and the board
-treats a sharp fall as a stronger signal than a sharp rise. A protocol
-with no recorded seven-day change is treated as flat, multiplier 1.00.
+```
+const −0.200, logTVL* +0.111, logAge* +0.579, logChains* +0.110,
+growth* −0.471, Dexs +1.410, Lending +1.370, Liquid Staking +0.018,
+Yield +0.756, RWA +0.340, Derivatives +0.427, Bridge −0.105,
+Yield Aggregator +0.517
+```
 
-Worked numbers:
+Age dominates: the longer a protocol has run, the more likely it is to
+have listed. The median odds on the board is 0.48.
 
-- Growth +40%: 1 + 0.6 × 0.40 = 1.24.
-- Growth +120%: 1 + 0.6 × 1.20 = 1.72. The clip at +150% is not hit.
-- Growth −30%: 1 − 0.75 × 0.30 = 0.775.
-- Growth −50%: 1 − 0.75 × 0.50 = 0.625.
+### 3. Own-token share — structural, from the snapshot's own rule
 
-A protocol growing 40% in a week and one shrinking 40% in a week end
-up 0.54 apart on this multiplier alone (1.24 against 0.70), which is
-roughly the difference between ranking near the top of its weight class
-and ranking near the bottom of it.
+Not a fitted term. It follows the watchlist's own definition of what
+counts as a standalone launch candidate:
 
-## Maturity: age helps, then stops helping
+| Protocol | Share | Board rows |
+| --- | --- | --- |
+| Standalone protocol | 1.00 | 198 |
+| Centralised exchange (CEX) | 0.10 | 42 |
+| Wrapped, staked or bridged product, or a versioned deployment (`V2`, `2.0`, …) | 0.05 | 102 |
 
-A protocol that has run for years without launching a token is read two
-ways at once. On one side, survival is evidence: it has users, revenue
-or at least persistence, and a launch would land on something real. On
-the other side, a very long run with no token starts to look like a
-protocol that will never launch one, and the board trims the score for
-it. So the maturity multiplier rises with age, reaches 1.00 at three
-years, and then decays gently toward 0.90 for the oldest protocols. It
-never goes below 0.90: age alone never kills a ranking, it only shades
-it. The exact shape is a property of the model, and it is the one place
-where the board leans on judgement rather than on a number in the
-snapshot.
+A wrapped product (WBTC is Bitcoin on Ethereum) or a versioned deployment
+(LayerZero v2 belongs to a parent whose token already trades) is not a
+protocol waiting on a launch of its own. A centralised exchange is not a
+protocol a reader can farm on-chain. The smallest applicable share wins.
 
-## Chains: breadth is worth a little
+## Held-out tests
 
-Each additional chain a protocol runs on adds 4% to the multiplier, up
-to four chains, for a maximum of 1.16. One chain is 1.00, two chains
-1.04, three 1.08, four or more 1.16. The reasoning is modest: a
-multi-chain protocol has more surfaces where a token could be useful,
-and more chances to be farmed, but chain count is a weak signal next to
-locked value and growth, so it is capped hard.
+Both fitted terms are tested held-out twice (two deterministic sha-256
+splits, 1 in 5 held out, fit on the train split only), plus once
+walk-forward (train on protocols tracked before 2025-06-01, test after).
+Each value test is scored twice: on every held-out anchor, and on the
+held-out anchors whose mcap/TVL lies inside [0.005, 5] — the handful
+outside that band are data oddities that swamp any R².
 
-## Category: the kind of protocol matters
+| Test | Value R² (all) | Value R² (trimmed) | Value MAE | Odds AUC |
+| --- | --- | --- | --- | --- |
+| Split A (n=28 / 163) | −0.15 | 0.403 | ×6.2 / ×3.8 | 0.749 |
+| Split B (n=29 / 157) | 0.305 | 0.382 | ×5.7 / ×4.6 | 0.656 |
+| Walk-forward (n=20 / 244) | −1.281 | −0.67 | ×11.6 / ×5.1 | 0.579 |
 
-Different kinds of protocols capture different shares of their locked
-value as token value, so the category multiplier adjusts for that. It
-reads only the category string the snapshot carries, never the
-protocol's name.
+Read honestly: on the trimmed anchors the value model explains about
+40% of the variance in log market cap, with a typical error of ×4–5 in
+dollars. On all anchors the R² is dragged below zero by the extreme-ratio
+outliers — the model does not predict those, and no TVL model could. The
+walk-forward test is the warning: a model fitted on pre-June-2025
+protocols does not predict post-June-2025 listings (R² −1.28). The board
+is a ranking built on the median relationship, not a pricing engine.
 
-| Category | Multiplier |
-| --- | --- |
-| Dexs, Lending | 1.10 |
-| Yield, Derivatives | 1.08 |
-| CDP, RWA, Curators, Prediction | 1.05 |
-| Bridged or staked products | 0.85 |
-| Everything else | 1.00 |
+The growth term deserves a note: its fitted coefficient is negative in
+both models (−0.31 in the value model, −0.47 standardised in the odds
+model). In this snapshot the market fell (median 7-day change −8.2%) and
+the fastest growers are small, young protocols whose tokens have not
+listed; once TVL and age are controlled, growth adds almost nothing
+(dropping it moves holdout R² by ~0.02–0.04). It is kept because the brief
+names it, winsorised so the +4,448% outlier cannot dominate.
 
-Dexes and lending sit at the top because their tokens have the clearest
-claim on the value flowing through them. Bridged and staked products
-sit at the bottom because their value is mostly a claim on someone
-else's token, not value of their own.
+## Worked examples (verified)
 
-## Three worked examples
+**#1 — Steakhouse Financial** (Risk Curators, TVL $2,753,981,495,
+11 chains, 543 days tracked, 7-day change −2.19%):
 
-These use the formula exactly as stated above, with a three-year-old
-protocol in each case so the maturity multiplier is 1.00 and the
-arithmetic can be followed end to end.
+```
+log10(mcap) = 1.7916 + 0.5842·9.4400 + 0.3054·2.7356 − 0.0803·1.0414
+              − 0.3062·(−0.0217) + 0 (Risk Curators is not a dummy category)
+            = 8.0649  →  fitted value ≈ $116.1M
+odds: z = 0.1022  →  P(list) = 0.5255;  share = 1.00
+implied = $116,151,399 × 0.5255 × 1.00 = $61,035,126
+```
 
-**Example A — a mid-size dex on the rise.** TVL $250M, growth +40%,
-three chains, Dexs. Base: 250 × 0.25 = 62.5. Size: (0.25)^−0.1 ≈ 1.149.
-Growth: 1.24. Chains: 1.08. Category: 1.10. Implied:
-62.5 × 1.149 × 1.24 × 1.00 × 1.08 × 1.10 ≈ $105.8M.
+**#6 — Polymarket International** (Prediction Market, TVL $320,193,439,
+1 chain, 1,845 days, 7-day change −1.08%):
 
-**Example B — a small lending protocol growing fast.** TVL $50M,
-growth +120%, four chains, Lending. Base: 50 × 0.25 = 12.5. Size:
-(0.05)^−0.1 ≈ 1.349. Growth: 1.72. Chains: 1.16. Category: 1.10.
-Implied: 12.5 × 1.349 × 1.72 × 1.00 × 1.16 × 1.10 ≈ $37.0M.
-Against Example A, the small protocol's implied value is about 74% of
-its TVL, while the mid-size one's is about 42%. The size and growth
-multipliers did their job: the small protocol is worth far more per
-dollar locked.
+```
+log10(mcap) = 1.7916 + 0.5842·8.5054 + 0.3054·3.2662 − 0.0803·0
+              − 0.3062·(−0.0108) + 0 = 7.7613  →  fitted ≈ $57.7M
+odds: z = 0.4450  →  P(list) = 0.6097;  share = 1.00
+implied = $57,719,571 × 0.6097 × 1.00 = $35,191,361
+```
 
-**Example C — a giant losing value.** TVL $8B, growth −50%, one chain,
-Dexs. Base: 8000 × 0.25 = 2000. Size: (8)^−0.1 ≈ 0.812, clipped up to
-0.85. Growth: 0.625. Chains: 1.00. Category: 1.10. Implied:
-2000 × 0.85 × 0.625 × 1.00 × 1.00 × 1.10 ≈ $1,168.8M. The giant still
-tops the board on absolute value, as it should — eight billion locked
-is eight billion locked — but its implied value is under 15% of its
-TVL, against 74% for the small grower in Example B. The board ranks
-the giant first and still tells you the small protocol is the better
-bet per dollar.
+Both recompute from the four-decimal coefficients printed above to within
+0.03% of the board's figures; the board uses the program's full-precision
+coefficients. The farm plan for Steakhouse Financial needs $1,027.50 in
+total ($1,000 deposit + $27.50 in fees, Ethereum gas); Polymarket
+International needs $500.46 ($500 deposit + $0.46 in fees, Polygon gas).
 
-## Who gets on the board at all
+## Farm plans — costed, per row
 
-Ranking is the second step. The first step is deciding who is even a
-candidate, and the board applies the watchlist's own rule to every row
-in the snapshot: a protocol is in only if it records no token, and only
-if it is not a wrapped, staked or bridged product of a token that
-already trades. The rule is enforced on the snapshot's own fields —
-the category (Bridge, Liquid Staking, Liquid Restaking, Restaked BTC
-and CEX are out), version markers, the words wrapped, staked and
-staking, and exchange names at the start of a protocol's name.
+Every row carries 7 steps, each 20–600 characters, built from the
+protocol's own record (name, category, main chain, TVL band) by the same
+builder in `lib/farm.ts` (board.json) and in the dashboard's `app.js`
+(detail view), so the page and the board always show the same plan:
 
-Out of the snapshot's 758 protocols, 198 pass the rule and are ranked:
-the watchlist's 40 plus every early protocol below the watchlist's
-floor. Another 144 pre-token records fail the rule and are set aside.
-The wording matters here: the board says a protocol "records no
-token", not that it "has no token". The snapshot's record is not proof
-that a token does not exist somewhere, and the board does not claim
-otherwise.
+1. Bridge the deposit to the protocol's main chain (bridge fee).
+2. Connect a fresh wallet and approve USDC (approval gas).
+3. Do the core action once, with the full deposit (deposit gas).
+4. Do a second action a week later, with half the amount (repeat use).
+5. Hold at least 4 weeks, acting once more in week 3 (no same-day in/out).
+6. Check the protocol's points/rewards page and confirm the wallet shows
+   activity (free).
+7. On listing day, claim through the official claim page before exiting
+   (claim gas).
 
-## The farm plan on each row
+Capital is sized to the TVL band: $1,000 at TVL ≥ $1B, $500 at ≥ $100M,
+$250 at ≥ $10M, $100 below. Gas is a typical per-transaction cost per
+chain (November 2026): Ethereum approve $1.50 / deposit $5.00 / bridge
+$8.00; Solana ~$0.02–0.05; Base/Arbitrum/Optimism $0.05–0.30; BSC
+$0.05–0.25; Polygon $0.02–0.15; Avalanche $0.10–0.50; other chains
+$0.40–1.00. These are stated assumptions, not live quotes — the entry
+runs with no network. Total cash to start a plan (deposit + fees) runs
+$100.18–$1,027.50 across the board; the fees alone are $0.18–$27.50.
 
-Every ranked row carries a seven-step plan for farming the protocol,
-built from the row's own category, chains, TVL and age. The shape is
-the same each time: a fresh wallet first, then the category's main
-action, then a second action on a second chain, then a weekly cadence,
-a hold period, a warning about claiming, and an exit rule. Every step
-states what it costs and how long it takes. The plan is a starting
-point for research, not a promise: a farm plan cannot know a
-protocol's future token, its eligibility rules, or whether farming it
-is worth your time at all.
+## The dashboard
 
-## What the board is not
+A single page, no network: KPI strip (342 pre-token rows, 40/40 watchlist,
+758 protocols, median implied $1,585,504, value R², odds AUC), an
+integrity strip stating the method and the "records no token" caveat, a
+sortable/filterable board (search, category, minimum TVL, watchlist-only),
+a detail view per protocol (model terms + the 7 costed steps), and an
+Anchors & calibration tab (holdout tables + the 40 largest anchors, fitted
+vs actual). The dashboard source is kept small enough that the dossier's
+text holds the page's logic whole; the board data follows it, one row per
+line, up to the 65,536-byte text cap.
 
-- It is not a price prediction. Implied value is a ranking device, and
-  a token that launches will trade on its own supply, unlocks and
-  market conditions, none of which are in the snapshot.
-- It is not a safety check. A high rank says nothing about audits,
-  admin keys, or whether a protocol will still exist next month.
-- It is not complete. The snapshot is one moment in time; a protocol
-  that launches a token the day after the snapshot is still ranked as
-  if it had none.
-- It is not neutral about growth. The growth multiplier rewards a hot
-  week and punishes a cold one, so a protocol that had one good week
-  can outrank a steadier one. That is a choice, and it can be wrong.
+## Self-test
 
-## Reproducing the board
+`main.ts` refuses to write output unless: the board holds at least 100
+rows, every watchlist slug is covered, every row's farm plan holds 7 steps
+of 20–600 characters, and every implied value is a positive whole number.
+The program runs twice and both runs must write the same bytes (fixed
+splits, fixed iteration counts, no clock, no randomness). Run it with:
 
-The program reads the sealed snapshot and writes the board, the
-dashboard data, the static dashboard, the screenshots and the dossier.
-Run it from the repository root with an output directory set and the
-snapshot passed in; the exact command is in the README. Two runs on
-the same snapshot write byte-identical outputs, so anyone with the
-snapshot can reproduce the board exactly and check it line by line
-against this note.
+```sh
+mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
+```
 
-## Files
+## Limitations
 
-- `main.ts` — the entrypoint: reads the snapshot, runs the model,
-  writes the outputs.
-- `lib/model.ts` — the scoring model and the eligibility rule.
-- `dashboard/` — the static board page, its script and its styles.
-- `screenshots/` — board, detail and filtered views of the dashboard.
-- `vendor/makefun-board.ts` — the kit's dossier builder, unchanged.
-- `docs/methodology.md` — this note.
+- The value model is weak in absolute terms (R² 0.21 in-sample); the
+  ranking is the product, the dollar figures are order-of-magnitude.
+- The walk-forward test fails: the model does not transport across time.
+- Growth's fitted effect is negative in this snapshot; it is reported,
+  not hidden.
+- Gas figures are typical costs, not live quotes; a listing's real cost
+  depends on the day.
+- "Records no token" is DefiLlama's record, not proof — a protocol on the
+  board may already have a token its record does not carry.
